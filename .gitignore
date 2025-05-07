@@ -13,3 +13,8 @@ log/
 
 .idea
 .vscode/
+venv/
+__pycache__/
+*.egg
+*.egg-info/
+*.whl
