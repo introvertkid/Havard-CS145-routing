@@ -12,7 +12,7 @@ INFINITY = 16
 
 class DVrouter(Router):
     def __init__(self, addr, heartbeat_time):
-        Router().__init__(addr)
+        super().__init__(addr, heartbeat_time=heartbeat_time)
         self.heartbeat_time = heartbeat_time
         self.last_time = 0
 
@@ -44,24 +44,28 @@ class DVrouter(Router):
                 if next_hop in self.neighbor_to_port:
                     out_port = self.neighbor_to_port[next_hop]
                     self.send(out_port, packet)
-        else:
-            neighbor = packet.src_addr
-            received_vector = json.loads(packet.content)
-            self.neighbor_vectors[neighbor] = received_vector
-            updated = False
+        elif packet.is_routing:
+            vector = json.loads(packet.content)
+            sender = packet.src_addr
 
-            for dest, cost in received_vector.items():
-                if dest == self.addr:
-                    continue
-                new_cost = self.link_costs[neighbor] + cost
-                if (dest not in self.routing_table or
-                    new_cost < self.routing_table[dest][0] or
-                    self.routing_table[dest][1] == neighbor):
-                    self.routing_table[dest] = (min(new_cost, INFINITY), neighbor)
+            # Bỏ qua gói tin nếu sender không còn là neighbor
+            if sender not in self.link_costs:
+                return
+
+            updated = False
+            self.neighbor_vectors[sender] = vector
+
+            for dest, cost in vector.items():
+                total_cost = self.link_costs[sender] + cost
+                total_cost = min(total_cost, INFINITY)
+                if (dest not in self.routing_table) or (total_cost < self.routing_table[dest][0]):
+                    self.routing_table[dest] = (total_cost, sender)
                     updated = True
 
             if updated:
                 self.broadcast_vector()
+        else:
+            print(f"Unknown packet type received at {self.addr} from port {port}: {packet}")
 
     def handle_new_link(self, port, endpoint, cost):
         # TODO
@@ -102,7 +106,16 @@ class DVrouter(Router):
             self.routing_table.pop(dest, None)
 
         if updated:
+            # Recalculate full table from current neighbor_vectors
+            for neighbor, vector in self.neighbor_vectors.items():
+                for dest, cost in vector.items():
+                    if neighbor in self.link_costs:
+                        new_cost = self.link_costs[neighbor] + cost
+                        if (dest not in self.routing_table or
+                            new_cost < self.routing_table[dest][0]):
+                            self.routing_table[dest] = (min(new_cost, INFINITY), neighbor)
             self.broadcast_vector()
+
 
     def handle_time(self, time_ms):
         if time_ms - self.last_time >= self.heartbeat_time:
@@ -114,6 +127,13 @@ class DVrouter(Router):
         vector = {dest: cost for dest, (cost, _) in self.routing_table.items()}
         msg = json.dumps(vector)
         for neighbor, port in self.neighbor_to_port.items():
+            poisoned_vector = {}
+            for dest, (cost, next_hop) in self.routing_table.items():
+                if next_hop == neighbor:
+                    poisoned_vector[dest] = INFINITY
+                else:
+                    poisoned_vector[dest] = cost
+            msg = json.dumps(poisoned_vector)
             packet = Packet(Packet.ROUTING, self.addr, neighbor, msg)
             self.send(port, packet)
 
