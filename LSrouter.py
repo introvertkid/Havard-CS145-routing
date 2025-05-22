@@ -52,8 +52,10 @@ class LSrouter(Router):
         # Khởi tạo khoảng cách và tiền thân
         distances = {node: float('inf') for node in all_nodes}
         distances[self.addr] = 0
+        # Lưu node tiền thân của mỗi node trên đường đi ngắn nhất.
         predecessors = {node: None for node in all_nodes}
         ports = {node: None for node in all_nodes}
+        # Hàng đợi ưu tiên (min-heap) để chọn node có khoảng cách nhỏ nhất.
         pq = [(0, self.addr)]
         visited = set()
 
@@ -102,22 +104,29 @@ class LSrouter(Router):
             'sequence': self.sequence,
             'links': {k: v[1] for k, v in self.local_links.items()}
         }
+        # Tạo một gói tin định tuyến chứa nội dung LSA.
         packet = Packet(Packet.ROUTING, self.addr, None, content=json.dumps(lsa))
         for port in self.links:
             self.send(port, packet.copy())
 
     def handle_packet(self, port, packet):
         """Xử lý gói tin đến."""
+        # Gói tin dữ liệu được gửi từ một client
         if packet.is_traceroute:
+            # Kiểm tra xem đích của gói tin (packet.dst_addr) có trong bảng định tuyến (forwarding_table) không.
             if packet.dst_addr in self.forwarding_table:
+                # Lấy cổng đầu ra (out_port) từ forwarding_table cho đích của gói tin.
                 out_port, _ = self.forwarding_table[packet.dst_addr]
                 self.send(out_port, packet)
+        #Gói tin chứa Link-State Advertisement (LSA)
         else:
             try:
                 lsa = json.loads(packet.content)
+                # Địa chỉ của router gửi LSA
                 router = lsa['router']
                 sequence = lsa['sequence']
                 links = lsa['links']
+                # Kiểm tra xem LSA có phải là thông tin mới không.
                 if router not in self.lsdb or sequence > self.lsdb[router]['sequence']:
                     self.lsdb[router] = {'links': links, 'sequence': sequence}
                     self.dijkstra()
@@ -142,7 +151,8 @@ class LSrouter(Router):
             self.lsdb[self.addr] = {'links': {k: v[1] for k, v in self.local_links.items()}, 'sequence': self.sequence}
             self.dijkstra()
             self.broadcast_lsa()
-
+            
+    # Hàm được gọi định kỳ bởi hệ thống mô phỏng để kiểm tra xem router có cần gửi LSA không.
     def handle_time(self, time_ms):
         """Xử lý cập nhật định kỳ."""
         if time_ms - self.last_time >= self.heartbeat_time:
